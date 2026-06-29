@@ -17,6 +17,9 @@ extern "C" {
 #endif
 
 #include <pthread.h>
+#if defined(EC_USE_XDP)
+#include "ec_xsk.h"
+#endif
 
 /** pointer structure to Tx and Rx stacks */
 typedef struct
@@ -52,6 +55,10 @@ typedef struct
    int rxsa[EC_MAXBUF];
    /** temporary rx buffer */
    ec_bufT tempinbuf;
+#if defined(EC_USE_XDP)
+   /** per-redundant-port AF_XDP backend state */
+   ec_xsk_t xsk;
+#endif
 } ecx_redportt;
 
 /** pointer structure to buffers, vars and mutexes for port instantiation */
@@ -86,6 +93,10 @@ typedef struct
    pthread_mutex_t getindex_mutex;
    pthread_mutex_t tx_mutex;
    pthread_mutex_t rx_mutex;
+#if defined(EC_USE_XDP)
+   /** per-port AF_XDP backend state */
+   ec_xsk_t xsk;
+#endif
 } ecx_portt;
 
 extern const uint16 priMAC[3];

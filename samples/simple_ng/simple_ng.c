@@ -293,9 +293,17 @@ int main(int argc, char *argv[])
    if (fieldbus_start(&fieldbus))
    {
       int i, min_time, max_time;
+      ec_groupt *grp;
       min_time = max_time = 0;
-      for (i = 1; i <= 10000; ++i)
+      grp = fieldbus.context.grouplist + fieldbus.group;
+      for (i = 1; i <= 2000; ++i)
       {
+         /* Cycle through 8 output bits: light one bit at a time */
+         if (grp->Obytes > 0)
+         {
+            memset(grp->outputs, 0, grp->Obytes);
+            grp->outputs[0] = (uint8)(1 << ((i - 1) % 8));
+         }
          printf("Iteration %4d:", i);
          if (!fieldbus_dump(&fieldbus))
          {

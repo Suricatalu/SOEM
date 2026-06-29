@@ -121,6 +121,32 @@ extern "C" {
 /** Secondary source MAC address used for EtherCAT. */
 #define EC_SECONDARY_MAC_ARRAY @EC_SECONDARY_MAC_ARRAY@
 
+/* --- AF_XDP (XSK) backend tunables --- */
+
+/** number of UMEM frames per XSK socket */
+#define EC_XSK_NUM_FRAMES (@EC_XSK_NUM_FRAMES@)
+
+/** UMEM frame size in bytes */
+#define EC_XSK_FRAME_SIZE (@EC_XSK_FRAME_SIZE@)
+
+/** default NIC queue id bound by the XSK */
+#define EC_XSK_QUEUE_ID (@EC_XSK_QUEUE_ID@)
+
+/** enable zero-copy mode (1) or copy mode (0) */
+#define EC_XSK_ZEROCOPY (@EC_XSK_ZEROCOPY@)
+
+/** NAPI busy-poll budget in microseconds (SO_BUSY_POLL) */
+#define EC_XSK_BUSYPOLL_US (@EC_XSK_BUSYPOLL_US@)
+
+/** NAPI busy-poll packet budget per poll (SO_BUSY_POLL_BUDGET) */
+#define EC_XSK_BUSYPOLL_BUDGET (@EC_XSK_BUSYPOLL_BUDGET@)
+
+/** max number of RX descriptors peeked per receive call */
+#define EC_XSK_RX_BATCH (@EC_XSK_RX_BATCH@)
+
+/** invalid UMEM frame marker */
+#define EC_XSK_INVALID_FRAME UINT64_MAX
+
 #ifdef __cplusplus
 }
 #endif

@@ -46,6 +46,15 @@ set(EC_DEFAULTRETRIES 3 CACHE STRING "default number of retries if wkc <= 0")
 set(EC_PRIMARY_MAC "01:01:01:01:01:01" CACHE STRING "Primary MAC address")
 set(EC_SECONDARY_MAC "04:04:04:04:04:04" CACHE STRING "Secondary MAC address")
 
+# AF_XDP (XSK) backend tunables
+set(EC_XSK_NUM_FRAMES 4096 CACHE STRING "number of UMEM frames per XSK socket")
+set(EC_XSK_FRAME_SIZE 2048 CACHE STRING "UMEM frame size in bytes")
+set(EC_XSK_QUEUE_ID 0 CACHE STRING "default NIC queue id bound by the XSK")
+set(EC_XSK_ZEROCOPY 0 CACHE STRING "enable zero-copy (1) or copy mode (0)")
+set(EC_XSK_BUSYPOLL_US 50 CACHE STRING "NAPI busy-poll budget in microseconds")
+set(EC_XSK_BUSYPOLL_BUDGET 8 CACHE STRING "NAPI busy-poll packet budget per poll")
+set(EC_XSK_RX_BATCH 64 CACHE STRING "max RX descriptors peeked per receive call")
+
 if(PROJECT_IS_TOP_LEVEL)
   # Make option visible in ccmake, cmake-gui
   option(BUILD_SHARED_LIBS "Build shared library" OFF)
