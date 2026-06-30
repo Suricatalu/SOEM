@@ -141,6 +141,9 @@ extern "C" {
 /** NAPI busy-poll packet budget per poll (SO_BUSY_POLL_BUDGET) */
 #define EC_XSK_BUSYPOLL_BUDGET (@EC_XSK_BUSYPOLL_BUDGET@)
 
+/** use the XDP need-wakeup protocol (1) or keep NAPI always hot (0) */
+#define EC_XSK_NEED_WAKEUP (@EC_XSK_NEED_WAKEUP@)
+
 /** max number of RX descriptors peeked per receive call */
 #define EC_XSK_RX_BATCH (@EC_XSK_RX_BATCH@)
 

@@ -58,8 +58,13 @@ static void ec_xsk_complete_tx(ec_xsk_t *self)
       return;
    }
 
-   /* Kick the kernel to process the TX ring only when it asks for a wakeup */
+   /* Kick the kernel to process the TX ring.
+    * With need-wakeup enabled we only kick when the ring asks for it; with it
+    * disabled the flag never fires, so we must always kick or nothing is ever
+    * transmitted. */
+#if EC_XSK_NEED_WAKEUP
    if (xsk_ring_prod__needs_wakeup(&self->tx))
+#endif
    {
       sendto(xsk_socket__fd(self->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
    }
@@ -204,11 +209,14 @@ int ec_xsk_open(ec_xsk_t *self, const char *ifname, uint32_t queue_id,
    xsk_cfg.rx_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
    xsk_cfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
    xsk_cfg.xdp_flags = 0;
-   /* XDP_USE_NEED_WAKEUP enables the need-wakeup contract: kernel sets a flag
-    * on the rings, and we only wake the driver (recvfrom/sendto) when asked.
-    * This is the prerequisite for NAPI busy polling below. */
-   xsk_cfg.bind_flags =
-       (EC_XSK_ZEROCOPY ? XDP_ZEROCOPY : XDP_COPY) | XDP_USE_NEED_WAKEUP;
+   /* need-wakeup is optional: enabling it saves syscalls but adds a wake
+    * round-trip on each RX, which hurts low-latency EtherCAT. When disabled,
+    * the driver NAPI stays hot and we must always kick TX/RX (see below). */
+   xsk_cfg.bind_flags = (EC_XSK_ZEROCOPY ? XDP_ZEROCOPY : XDP_COPY)
+#if EC_XSK_NEED_WAKEUP
+                        | XDP_USE_NEED_WAKEUP
+#endif
+       ;
    /* If we attached our own program above, inhibit libbpf's default loader */
    xsk_cfg.libbpf_flags =
        (self->prog != NULL) ? XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD : 0;
@@ -380,8 +388,12 @@ int ec_xsk_recv(ec_xsk_t *self, void *buf, uint32_t buf_len)
    /* Drive NAPI busy-poll: with SO_PREFER_BUSY_POLL set, this non-blocking
     * recvfrom() makes the kernel poll the NIC driver inline and move frames
     * into the RX ring right now, instead of waiting for the next IRQ/softirq.
-    * SO_BUSY_POLL bounds how long it spins, so this returns within ~budget us. */
+    * SO_BUSY_POLL bounds how long it spins, so this returns within ~budget us.
+    * With need-wakeup disabled the flag never fires, so we always kick to keep
+    * NAPI hot. */
+#if EC_XSK_NEED_WAKEUP
    if (xsk_ring_prod__needs_wakeup(&self->umem.fq))
+#endif
    {
       recvfrom(xsk_socket__fd(self->xsk), NULL, 0, MSG_DONTWAIT, NULL, NULL);
    }
