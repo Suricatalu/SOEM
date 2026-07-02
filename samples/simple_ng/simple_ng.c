@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 typedef struct
 {
@@ -294,6 +295,12 @@ int main(int argc, char *argv[])
    {
       int i, min_time, max_time;
       ec_groupt *grp;
+      /* Running accumulators for mean/stddev over successful roundtrips.
+       * Kept separate from the timing logic so measurement is unaffected. */
+      double sum_time = 0.0;
+      double sum_sq_time = 0.0;
+      int sample_count = 0;
+      boolean dump_ok;
       min_time = max_time = 0;
       grp = fieldbus.context.grouplist + fieldbus.group;
       for (i = 1; i <= 2000; ++i)
@@ -305,7 +312,11 @@ int main(int argc, char *argv[])
             grp->outputs[0] = (uint8)(1 << ((i - 1) % 8));
          }
          printf("Iteration %4d:", i);
-         if (!fieldbus_dump(&fieldbus))
+         /* Call fieldbus_dump() exactly once (it performs the roundtrip);
+          * capture its result so statistics can reuse the same sample without
+          * triggering an extra measurement. */
+         dump_ok = fieldbus_dump(&fieldbus);
+         if (!dump_ok)
          {
             fieldbus_check_state(&fieldbus);
          }
@@ -321,9 +332,38 @@ int main(int argc, char *argv[])
          {
             max_time = fieldbus.roundtrip_time;
          }
+
+         /* Accumulate statistics only for valid roundtrips (same successful
+          * path used by the min/max logic above). This does not alter the
+          * measured roundtrip_time in any way. */
+         if (dump_ok)
+         {
+            double t = (double)fieldbus.roundtrip_time;
+            sum_time += t;
+            sum_sq_time += t * t;
+            ++sample_count;
+         }
          osal_usleep(5000);
       }
       printf("\nRoundtrip time (usec): min %d max %d\n", min_time, max_time);
+      if (sample_count > 0)
+      {
+         double mean = sum_time / sample_count;
+         double stddev = 0.0;
+         if (sample_count > 1)
+         {
+            /* Sample variance (N-1); clamp tiny negatives from rounding. */
+            double variance =
+                (sum_sq_time - sum_time * mean) / (sample_count - 1);
+            if (variance < 0.0)
+            {
+               variance = 0.0;
+            }
+            stddev = sqrt(variance);
+         }
+         printf("Roundtrip time (usec): mean %.2f stddev %.2f over %d samples\n",
+                mean, stddev, sample_count);
+      }
       fieldbus_stop(&fieldbus);
    }
 
