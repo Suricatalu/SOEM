@@ -13,6 +13,9 @@
 #include <string.h>
 #include <math.h>
 
+/* Number of measurement iterations (also bounds the sample buffer). */
+#define SIMPLE_NG_ITERATIONS 10000
+
 typedef struct
 {
    ecx_contextt context;
@@ -268,6 +271,38 @@ fieldbus_check_state(Fieldbus *fieldbus)
    }
 }
 
+/* Ascending integer comparator for qsort (used by the latency percentiles). */
+static int
+cmp_int_asc(const void *a, const void *b)
+{
+   int ia = *(const int *)a;
+   int ib = *(const int *)b;
+   return (ia > ib) - (ia < ib);
+}
+
+/* Nearest-rank percentile from an ascending-sorted array (p in 0..100).
+ * Latency is heavy-tailed, so percentiles (P50/P99) describe it far better
+ * than mean/stddev. */
+static int
+percentile_usec(const int *sorted, int n, double p)
+{
+   int rank;
+   if (n <= 0)
+   {
+      return 0;
+   }
+   rank = (int)ceil(p / 100.0 * n);
+   if (rank < 1)
+   {
+      rank = 1;
+   }
+   if (rank > n)
+   {
+      rank = n;
+   }
+   return sorted[rank - 1];
+}
+
 int main(int argc, char *argv[])
 {
    Fieldbus fieldbus;
@@ -310,10 +345,12 @@ int main(int argc, char *argv[])
       double sum_time = 0.0;
       double sum_sq_time = 0.0;
       int sample_count = 0;
+      /* Per-sample buffer so we can compute percentiles (P50/P99) at the end. */
+      int samples[SIMPLE_NG_ITERATIONS];
       boolean dump_ok;
       min_time = max_time = 0;
       grp = fieldbus.context.grouplist + fieldbus.group;
-      for (i = 1; i <= 2000; ++i)
+      for (i = 1; i <= SIMPLE_NG_ITERATIONS; ++i)
       {
          /* Cycle through 8 output bits: light one bit at a time */
          if (grp->Obytes > 0)
@@ -351,9 +388,10 @@ int main(int argc, char *argv[])
             double t = (double)fieldbus.roundtrip_time;
             sum_time += t;
             sum_sq_time += t * t;
+            samples[sample_count] = fieldbus.roundtrip_time;
             ++sample_count;
          }
-         osal_usleep(5000);
+         osal_usleep(2000);
       }
       printf("\nRoundtrip time (usec): min %d max %d\n", min_time, max_time);
       if (sample_count > 0)
@@ -373,6 +411,14 @@ int main(int argc, char *argv[])
          }
          printf("Roundtrip time (usec): mean %.2f stddev %.2f over %d samples\n",
                 mean, stddev, sample_count);
+
+         /* Percentiles describe the heavy-tailed latency far better than
+          * mean/stddev. Sort in place (original order is no longer needed). */
+         qsort(samples, sample_count, sizeof(samples[0]), cmp_int_asc);
+         printf("Roundtrip time (usec): P50 %d P99 %d over %d samples\n",
+                percentile_usec(samples, sample_count, 50.0),
+                percentile_usec(samples, sample_count, 99.0),
+                sample_count);
       }
       fieldbus_stop(&fieldbus);
    }
