@@ -473,7 +473,9 @@ static int ecx_waitinframe_red(ecx_portt *port, uint8 idx, osal_timert *timer)
    /* if not in redundant mode then always assume secondary is OK */
    if (port->redstate == ECT_RED_NONE)
       wkc2 = 0;
-   /* use ppoll to reduce busy_polling */
+#if !EC_XSK_BUSYLOOP
+   /* ppoll-based wait: set up the pollfd(s). Compiled out in busy-loop mode
+    * so these variables do not exist and cannot warn about being unused. */
    struct pollfd fds[2];
    struct pollfd *fdsp;
    int poll_err = 0;
@@ -492,6 +494,7 @@ static int ecx_waitinframe_red(ecx_portt *port, uint8 idx, osal_timert *timer)
       fds[1].events = POLLIN;
    }
    fdsp = &fds[0];
+#endif
    do
    {
       /* Non-blocking peek FIRST. AF_XDP frames typically come back within a
@@ -513,12 +516,23 @@ static int ecx_waitinframe_red(ecx_portt *port, uint8 idx, osal_timert *timer)
       if ((wkc > EC_NOFRAME) && (wkc2 > EC_NOFRAME))
          break;
 
+#if EC_XSK_BUSYLOOP
+      /* Pure busy-loop mode (legacy behaviour): never sleep. Just hint the CPU
+       * we are spinning and loop back to peek again. Lowest latency; this pins
+       * the core near 100%, so pair it with CPU isolation (isolcpus/taskset). */
+#if defined(__aarch64__)
+      __asm__ __volatile__("yield" ::: "memory");
+#elif defined(__x86_64__) || defined(__i386__)
+      __asm__ __volatile__("pause" ::: "memory");
+#endif
+#else
       /* Nothing yet: sleep briefly on the socket(s) to avoid a 100% busy
        * spin, then loop back and peek again at the top. Keep going on EINTR;
        * bail out only on a real ppoll() error. */
       poll_err = ppoll(fdsp, pollcnt, &timeout_spec, NULL);
       if ((poll_err < 0) && (errno != EINTR))
          break;
+#endif
       /* wait for both frames to arrive or timeout */
    } while (!osal_timer_is_expired(timer));
    /* only do redundant functions when in redundant mode */
