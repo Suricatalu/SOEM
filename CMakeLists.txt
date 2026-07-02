@@ -61,6 +61,13 @@ set(EC_XSK_RX_BATCH 64 CACHE STRING "max RX descriptors peeked per receive call"
 # 0 = peek-first then ppoll() sleep (current): saves CPU, may hit scheduler-tick latency
 set(EC_XSK_BUSYLOOP 0 CACHE STRING "pure busy-loop RX wait (1) or ppoll wait (0)")
 
+# Real-time scheduling for the sample measurement thread. Needs root or
+# CAP_SYS_NICE (and a non-zero rtprio ulimit). Off by default.
+# 1 = raise the calling thread to SCHED_FIFO; 0 = normal SCHED_OTHER
+set(EC_RT_FIFO 0 CACHE STRING "run sample loop as SCHED_FIFO real-time (1) or not (0)")
+# SCHED_FIFO priority (1-99) used when EC_RT_FIFO=1
+set(EC_RT_FIFO_PRIO 80 CACHE STRING "SCHED_FIFO priority when EC_RT_FIFO=1")
+
 if(PROJECT_IS_TOP_LEVEL)
   # Make option visible in ccmake, cmake-gui
   option(BUILD_SHARED_LIBS "Build shared library" OFF)

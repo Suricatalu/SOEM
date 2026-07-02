@@ -150,6 +150,12 @@ extern "C" {
 /** pure busy-loop RX wait with no ppoll (1) or ppoll-based wait (0) */
 #define EC_XSK_BUSYLOOP (@EC_XSK_BUSYLOOP@)
 
+/** run the sample measurement thread as SCHED_FIFO real-time (1) or not (0) */
+#define EC_RT_FIFO (@EC_RT_FIFO@)
+
+/** SCHED_FIFO priority (1-99) used when EC_RT_FIFO=1 */
+#define EC_RT_FIFO_PRIO (@EC_RT_FIFO_PRIO@)
+
 /** invalid UMEM frame marker */
 #define EC_XSK_INVALID_FRAME UINT64_MAX
 

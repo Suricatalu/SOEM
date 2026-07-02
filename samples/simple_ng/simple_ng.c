@@ -291,6 +291,16 @@ int main(int argc, char *argv[])
    }
 
    fieldbus_initialize(&fieldbus, argv[1]);
+
+#if EC_RT_FIFO
+   /* Promote this thread to real-time BEFORE the measurement loop. Requires
+    * root/CAP_SYS_NICE; on failure we only warn and continue (non-fatal). */
+   if (!osal_thread_set_realtime(EC_RT_FIFO_PRIO))
+   {
+      printf("warning: SCHED_FIFO not enabled (need root/CAP_SYS_NICE)\n");
+   }
+#endif
+
    if (fieldbus_start(&fieldbus))
    {
       int i, min_time, max_time;

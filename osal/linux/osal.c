@@ -6,6 +6,7 @@
 #include <osal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 /* Returns time from some unspecified moment in past,
  * strictly increasing, used for time intervals measurement. */
@@ -120,6 +121,30 @@ int osal_thread_create_rt(void *thandle, int stacksize, void *func, void *param)
       return 0;
    }
 
+   return 1;
+}
+
+int osal_thread_set_realtime(int priority)
+{
+   struct sched_param schparam;
+   int ret;
+
+   /* Lock current + future pages so the RT loop never takes a page fault. */
+   if (mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
+   {
+      /* Not fatal: keep going even if memory could not be locked. */
+   }
+
+   /* Promote THIS thread (not a new one) to SCHED_FIFO.
+    * Note: pthread_setschedparam() returns a positive errno on failure,
+    * so compare against 0 (the legacy "< 0" check in this file is wrong). */
+   memset(&schparam, 0, sizeof(schparam));
+   schparam.sched_priority = priority;
+   ret = pthread_setschedparam(pthread_self(), SCHED_FIFO, &schparam);
+   if (ret != 0)
+   {
+      return 0;
+   }
    return 1;
 }
 

@@ -144,6 +144,19 @@ int osal_thread_create(void *thandle, int stacksize, void *func, void *param);
 int osal_thread_create_rt(void *thandle, int stacksize, void *func, void *param);
 
 /**
+ * @brief Raise the CALLING thread to SCHED_FIFO real-time scheduling and
+ *        lock its memory (mlockall) to avoid page-fault jitter.
+ *
+ * Unlike osal_thread_create_rt(), this does not spawn a thread; it promotes
+ * the current one. Intended for single-threaded apps whose main loop is the
+ * cyclic work (e.g. simple_ng). Requires root or CAP_SYS_NICE.
+ *
+ * @param priority SCHED_FIFO priority (1-99).
+ * @return 1 on success, 0 on failure.
+ */
+int osal_thread_set_realtime(int priority);
+
+/**
  * @brief Creates a mutex.
  *
  * @return Pointer to the created mutex or NULL on failure.
