@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 
 /* Number of measurement iterations (also bounds the sample buffer). */
 #define SIMPLE_NG_ITERATIONS 10000
@@ -280,18 +279,19 @@ cmp_int_asc(const void *a, const void *b)
    return (ia > ib) - (ia < ib);
 }
 
-/* Nearest-rank percentile from an ascending-sorted array (p in 0..100).
- * Latency is heavy-tailed, so percentiles (P50/P99) describe it far better
- * than mean/stddev. */
+/* Nearest-rank percentile from an ascending-sorted array (p is a percentage,
+ * 0..100). Latency is heavy-tailed, so percentiles (P50/P99) describe it far
+ * better than mean/stddev. Uses integer ceiling division (no math.h). */
 static int
-percentile_usec(const int *sorted, int n, double p)
+percentile_usec(const int *sorted, int n, int p)
 {
    int rank;
    if (n <= 0)
    {
       return 0;
    }
-   rank = (int)ceil(p / 100.0 * n);
+   /* ceil(p * n / 100) using integer arithmetic */
+   rank = (p * n + 99) / 100;
    if (rank < 1)
    {
       rank = 1;
@@ -340,10 +340,6 @@ int main(int argc, char *argv[])
    {
       int i, min_time, max_time;
       ec_groupt *grp;
-      /* Running accumulators for mean/stddev over successful roundtrips.
-       * Kept separate from the timing logic so measurement is unaffected. */
-      double sum_time = 0.0;
-      double sum_sq_time = 0.0;
       int sample_count = 0;
       /* Per-sample buffer so we can compute percentiles (P50/P99) at the end. */
       int samples[SIMPLE_NG_ITERATIONS];
@@ -380,14 +376,11 @@ int main(int argc, char *argv[])
             max_time = fieldbus.roundtrip_time;
          }
 
-         /* Accumulate statistics only for valid roundtrips (same successful
+         /* Accumulate the sample only for valid roundtrips (same successful
           * path used by the min/max logic above). This does not alter the
           * measured roundtrip_time in any way. */
          if (dump_ok)
          {
-            double t = (double)fieldbus.roundtrip_time;
-            sum_time += t;
-            sum_sq_time += t * t;
             samples[sample_count] = fieldbus.roundtrip_time;
             ++sample_count;
          }
@@ -396,28 +389,12 @@ int main(int argc, char *argv[])
       printf("\nRoundtrip time (usec): min %d max %d\n", min_time, max_time);
       if (sample_count > 0)
       {
-         double mean = sum_time / sample_count;
-         double stddev = 0.0;
-         if (sample_count > 1)
-         {
-            /* Sample variance (N-1); clamp tiny negatives from rounding. */
-            double variance =
-                (sum_sq_time - sum_time * mean) / (sample_count - 1);
-            if (variance < 0.0)
-            {
-               variance = 0.0;
-            }
-            stddev = sqrt(variance);
-         }
-         printf("Roundtrip time (usec): mean %.2f stddev %.2f over %d samples\n",
-                mean, stddev, sample_count);
-
          /* Percentiles describe the heavy-tailed latency far better than
           * mean/stddev. Sort in place (original order is no longer needed). */
          qsort(samples, sample_count, sizeof(samples[0]), cmp_int_asc);
          printf("Roundtrip time (usec): P50 %d P99 %d over %d samples\n",
-                percentile_usec(samples, sample_count, 50.0),
-                percentile_usec(samples, sample_count, 99.0),
+                percentile_usec(samples, sample_count, 50),
+                percentile_usec(samples, sample_count, 99),
                 sample_count);
       }
       fieldbus_stop(&fieldbus);

@@ -147,8 +147,9 @@ extern "C" {
 /** max number of RX descriptors peeked per receive call */
 #define EC_XSK_RX_BATCH (@EC_XSK_RX_BATCH@)
 
-/** pure busy-loop RX wait with no ppoll (1) or ppoll-based wait (0) */
-#define EC_XSK_BUSYLOOP (@EC_XSK_BUSYLOOP@)
+/** RX wait strategy for ecx_waitinframe_red(): pure busy-loop with no ppoll
+ * (1) or ppoll-based wait (0). **/
+#define EC_RX_BUSYLOOP (@EC_RX_BUSYLOOP@)
 
 /** run the sample measurement thread as SCHED_FIFO real-time (1) or not (0) */
 #define EC_RT_FIFO (@EC_RT_FIFO@)

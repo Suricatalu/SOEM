@@ -88,6 +88,8 @@ typedef struct
    uint8 lastidx;
    /** current redundancy state */
    int redstate;
+   /** selected NIC backend for this port (AF_PACKET / AF_XDP) **/
+   int nicbackend;
    /** pointer to redundancy port and buffers */
    ecx_redportt *redport;
    pthread_mutex_t getindex_mutex;

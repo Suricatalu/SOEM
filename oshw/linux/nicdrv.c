@@ -29,6 +29,15 @@
  * packets. The software layer will detect the possible failure modes and
  * compensate. If needed the packets from interface A are resent through interface B.
  * This layer if fully transparent for the higher layers.
+ *
+ * When compiled with EC_USE_XDP an optional AF_XDP (XSK) backend is available
+ * in addition to the default AF_PACKET raw socket. The backend is selected at
+ * RUNTIME (no recompile needed): set the environment variable
+ * SOEM_NIC_BACKEND=xdp to use AF_XDP, otherwise the AF_PACKET path (identical
+ * to upstream) is used. The AF_XDP data path goes through an XSK socket with a
+ * UMEM shared memory region, bypassing most of the kernel network stack, but
+ * exposes exactly the same ecx_* interface and reuses the same indexed RX
+ * buffer / WKC matching / redundancy decision tree.
  */
 
 #define _GNU_SOURCE
@@ -46,6 +55,10 @@
 #include <netpacket/packet.h>
 #include <pthread.h>
 #include <poll.h>
+#if defined(EC_USE_XDP)
+#include <stdlib.h>
+#include <strings.h>
+#endif
 
 #include "oshw.h"
 #include "osal.h"
@@ -58,6 +71,23 @@ enum
    /** Double redundant NIC connection */
    ECT_RED_DOUBLE
 };
+
+/** NIC backend selected at runtime in ecx_setupnic(). */
+enum
+{
+   /** Default AF_PACKET raw socket (upstream behaviour) */
+   EC_NIC_AF_PACKET = 0,
+#if defined(EC_USE_XDP)
+   /** Optional AF_XDP (XSK) backend, opted in via SOEM_NIC_BACKEND=xdp */
+   EC_NIC_AF_XDP
+#endif
+};
+
+#if defined(EC_USE_XDP)
+/** Path and program name of the XDP/eBPF object loaded by the AF_XDP backend. */
+#define EC_XDP_PROG_PATH "ec_xdp_kern.o"
+#define EC_XDP_PROG_NAME "ec_xdp_redirect"
+#endif
 
 /** Primary source MAC address used for EtherCAT.
  * This address is not the MAC address used from the NIC.
@@ -97,6 +127,9 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary)
    struct sockaddr_ll sll;
    int *psock;
    pthread_mutexattr_t mutexattr;
+#if defined(EC_USE_XDP)
+   ec_xsk_t *xskp = NULL;
+#endif
 
    rval = 0;
    if (secondary)
@@ -116,6 +149,9 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary)
          port->redport->stack.rxbufstat = &(port->redport->rxbufstat);
          port->redport->stack.rxsa = &(port->redport->rxsa);
          ecx_clear_rxbufstat(&(port->redport->rxbufstat[0]));
+#if defined(EC_USE_XDP)
+         xskp = &(port->redport->xsk);
+#endif
       }
       else
       {
@@ -142,36 +178,76 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary)
       port->stack.rxsa = &(port->rxsa);
       ecx_clear_rxbufstat(&(port->rxbufstat[0]));
       psock = &(port->sockhandle);
+#if defined(EC_USE_XDP)
+      xskp = &(port->xsk);
+#endif
+
+      /* Decide the backend for this run. Default: AF_PACKET (upstream
+       * behaviour). Opt into AF_XDP only when compiled in AND explicitly
+       * requested via the environment. The primary port sets it; the
+       * secondary (redundant) port inherits the same value below. */
+      port->nicbackend = EC_NIC_AF_PACKET;
+#if defined(EC_USE_XDP)
+      {
+         const char *sel = getenv("SOEM_NIC_BACKEND");
+         if (sel != NULL && (strcasecmp(sel, "xdp") == 0 ||
+                             strcasecmp(sel, "af_xdp") == 0))
+         {
+            port->nicbackend = EC_NIC_AF_XDP;
+         }
+      }
+#endif
    }
-   /* we use RAW packet socket, with packet type ETH_P_ECAT */
-   *psock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ECAT));
-   if (*psock < 0)
-      return 0;
 
-   r = 0;
-   i = 1;
-   r |= setsockopt(*psock, SOL_SOCKET, SO_DONTROUTE, &i, sizeof(i));
+#if defined(EC_USE_XDP)
+   if (port->nicbackend == EC_NIC_AF_XDP)
+   {
+      /* Open an AF_XDP socket on the requested NIC queue and load our own
+       * XDP program that only redirects EtherCAT (0x88A4) frames. Expose the
+       * XSK fd through sockhandle so the ppoll() wait path keeps working. */
+      if (ec_xsk_open(xskp, ifname, EC_XSK_QUEUE_ID,
+                      EC_XDP_PROG_PATH, EC_XDP_PROG_NAME) != 0)
+      {
+         return 0;
+      }
+      *psock = xsk_socket__fd(xskp->xsk);
+      rval = 1;
+   }
+   else
+#endif
+   {
+      /* we use RAW packet socket, with packet type ETH_P_ECAT */
+      *psock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ECAT));
+      if (*psock < 0)
+         return 0;
 
-   /* connect socket to NIC by name */
-   strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name) - 1);
-   ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
-   r |= ioctl(*psock, SIOCGIFINDEX, &ifr);
-   ifindex = ifr.ifr_ifindex;
+      r = 0;
+      i = 1;
+      r |= setsockopt(*psock, SOL_SOCKET, SO_DONTROUTE, &i, sizeof(i));
 
-   /* reset flags of NIC interface */
-   ifr.ifr_flags = 0;
-   r |= ioctl(*psock, SIOCGIFFLAGS, &ifr);
+      /* connect socket to NIC by name */
+      strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name) - 1);
+      ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
+      r |= ioctl(*psock, SIOCGIFINDEX, &ifr);
+      ifindex = ifr.ifr_ifindex;
 
-   /* set flags of NIC interface, here promiscuous and broadcast */
-   ifr.ifr_flags = ifr.ifr_flags | IFF_PROMISC | IFF_BROADCAST;
-   r |= ioctl(*psock, SIOCSIFFLAGS, &ifr);
+      /* reset flags of NIC interface */
+      ifr.ifr_flags = 0;
+      r |= ioctl(*psock, SIOCGIFFLAGS, &ifr);
 
-   /* bind socket to protocol, in this case RAW EtherCAT */
-   memset((void*)&sll, 0, sizeof(sll));
-   sll.sll_family = AF_PACKET;
-   sll.sll_ifindex = ifindex;
-   sll.sll_protocol = htons(ETH_P_ECAT);
-   r |= bind(*psock, (struct sockaddr *)&sll, sizeof(sll));
+      /* set flags of NIC interface, here promiscuous and broadcast */
+      ifr.ifr_flags = ifr.ifr_flags | IFF_PROMISC | IFF_BROADCAST;
+      r |= ioctl(*psock, SIOCSIFFLAGS, &ifr);
+
+      /* bind socket to protocol, in this case RAW EtherCAT */
+      memset((void*)&sll, 0, sizeof(sll));
+      sll.sll_family = AF_PACKET;
+      sll.sll_ifindex = ifindex;
+      sll.sll_protocol = htons(ETH_P_ECAT);
+      r |= bind(*psock, (struct sockaddr *)&sll, sizeof(sll));
+      if (r == 0) rval = 1;
+   }
+
    /* setup ethernet headers in tx buffers so we don't have to repeat it */
    for (i = 0; i < EC_MAXBUF; i++)
    {
@@ -179,7 +255,6 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary)
       port->rxbufstat[i] = EC_BUF_EMPTY;
    }
    ec_setupheader(&(port->txbuf2));
-   if (r == 0) rval = 1;
 
    return rval;
 }
@@ -190,6 +265,18 @@ int ecx_setupnic(ecx_portt *port, const char *ifname, int secondary)
  */
 int ecx_closenic(ecx_portt *port)
 {
+#if defined(EC_USE_XDP)
+   if (port->nicbackend == EC_NIC_AF_XDP)
+   {
+      ec_xsk_close(&(port->xsk));
+      if (port->redport)
+      {
+         ec_xsk_close(&(port->redport->xsk));
+      }
+      return 0;
+   }
+#endif
+
    if (port->sockhandle >= 0)
       close(port->sockhandle);
    if ((port->redport) && (port->redport->sockhandle >= 0))
@@ -287,10 +374,24 @@ int ecx_outframe(ecx_portt *port, uint8 idx, int stacknumber)
    }
    lp = (*stack->txbuflength)[idx];
    (*stack->rxbufstat)[idx] = EC_BUF_TX;
-   rval = send(*stack->sock, (*stack->txbuf)[idx], lp, 0);
-   if (rval == -1)
+#if defined(EC_USE_XDP)
+   if (port->nicbackend == EC_NIC_AF_XDP)
    {
-      (*stack->rxbufstat)[idx] = EC_BUF_EMPTY;
+      ec_xsk_t *xskp = stacknumber ? &(port->redport->xsk) : &(port->xsk);
+      rval = ec_xsk_send(xskp, (*stack->txbuf)[idx], (uint32)lp);
+      if (rval != 0)
+      {
+         (*stack->rxbufstat)[idx] = EC_BUF_EMPTY;
+      }
+   }
+   else
+#endif
+   {
+      rval = send(*stack->sock, (*stack->txbuf)[idx], lp, 0);
+      if (rval == -1)
+      {
+         (*stack->rxbufstat)[idx] = EC_BUF_EMPTY;
+      }
    }
 
    return rval;
@@ -324,9 +425,21 @@ int ecx_outframe_red(ecx_portt *port, uint8 idx)
       ehp->sa1 = htons(secMAC[1]);
       /* transmit over secondary socket */
       port->redport->rxbufstat[idx] = EC_BUF_TX;
-      if (send(port->redport->sockhandle, &(port->txbuf2), port->txbuflength2, 0) == -1)
+#if defined(EC_USE_XDP)
+      if (port->nicbackend == EC_NIC_AF_XDP)
       {
-         port->redport->rxbufstat[idx] = EC_BUF_EMPTY;
+         if (ec_xsk_send(&(port->redport->xsk), &(port->txbuf2), (uint32)port->txbuflength2) != 0)
+         {
+            port->redport->rxbufstat[idx] = EC_BUF_EMPTY;
+         }
+      }
+      else
+#endif
+      {
+         if (send(port->redport->sockhandle, &(port->txbuf2), port->txbuflength2, 0) == -1)
+         {
+            port->redport->rxbufstat[idx] = EC_BUF_EMPTY;
+         }
       }
       pthread_mutex_unlock(&(port->tx_mutex));
    }
@@ -353,7 +466,17 @@ static int ecx_recvpkt(ecx_portt *port, int stacknumber)
       stack = &(port->redport->stack);
    }
    lp = sizeof(port->tempinbuf);
-   bytesrx = recv(*stack->sock, (*stack->tempbuf), lp, MSG_DONTWAIT);
+#if defined(EC_USE_XDP)
+   if (port->nicbackend == EC_NIC_AF_XDP)
+   {
+      ec_xsk_t *xskp = stacknumber ? &(port->redport->xsk) : &(port->xsk);
+      bytesrx = ec_xsk_recv(xskp, (*stack->tempbuf), (uint32)lp);
+   }
+   else
+#endif
+   {
+      bytesrx = recv(*stack->sock, (*stack->tempbuf), lp, MSG_DONTWAIT);
+   }
    port->tempinbufs = bytesrx;
 
    return (bytesrx > 0);
@@ -510,8 +633,19 @@ static int ecx_waitinframe_red(ecx_portt *port, uint8 idx, osal_timert *timer)
    fdsp = &fds[0];
    do
    {
+#if EC_RX_BUSYLOOP
+      /* Pure busy-loop mode (backend-independent RX wait strategy: works for
+       * both AF_PACKET and AF_XDP): skip ppoll entirely, just hint the CPU we
+       * are spinning, then fall through to the peek below unconditionally
+       * (no poll_err to check). */
+      (void)fdsp;
+      (void)pollcnt;
+      (void)timeout_spec;
+      (void)poll_err;
+#else
       poll_err = ppoll(fdsp, pollcnt, &timeout_spec, NULL);
       if (poll_err >= 0)
+#endif
       {
          /* only read frame if not already in */
          if (wkc <= EC_NOFRAME)

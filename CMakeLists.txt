@@ -57,9 +57,12 @@ set(EC_XSK_BUSYPOLL_BUDGET 8 CACHE STRING "NAPI busy-poll packet budget per poll
 # 0 = disable it (driver NAPI stays hot, lower latency, more syscalls/CPU)
 set(EC_XSK_NEED_WAKEUP 0 CACHE STRING "use need-wakeup protocol (1) or not (0)")
 set(EC_XSK_RX_BATCH 64 CACHE STRING "max RX descriptors peeked per receive call")
+
+# RX wait strategy for ecx_waitinframe_red(). Applies to WHICHEVER backend is
+# selected at runtime (AF_PACKET or AF_XDP) -- not specific to AF_XDP.
 # 1 = pure busy-loop RX wait (no ppoll, legacy behaviour): lowest latency, core at 100%
 # 0 = peek-first then ppoll() sleep (current): saves CPU, may hit scheduler-tick latency
-set(EC_XSK_BUSYLOOP 0 CACHE STRING "pure busy-loop RX wait (1) or ppoll wait (0)")
+set(EC_RX_BUSYLOOP 0 CACHE STRING "pure busy-loop RX wait (1) or ppoll wait (0); backend-independent")
 
 # Real-time scheduling for the sample measurement thread. Needs root or
 # CAP_SYS_NICE (and a non-zero rtprio ulimit). Off by default.
